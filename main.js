@@ -14,10 +14,13 @@ let mainWindow = null
 
 // ── Debug log (ring buffer + file, sent to renderer on demand) ────────────
 const debugLog = []
-const logFile = path.join(path.dirname(process.execPath === process.argv[0]
-  ? process.argv[1]   // dev: script path
-  : process.execPath  // packaged: exe path
-), 'debug.log')
+// In packaged exe: process.execPath is the exe itself, use its directory.
+// In dev (electron .): process.argv[1] is main.js path, use its directory.
+// app.isPackaged is the reliable way to tell which context we're in.
+const logDir  = app.isPackaged
+  ? path.dirname(process.execPath)
+  : path.dirname(process.argv[1] || process.execPath)
+const logFile = path.join(logDir, 'debug.log')
 
 // Truncate log file on startup
 try { fs.writeFileSync(logFile, '=== SubtitleBurner debug log ' + new Date().toISOString() + ' ===\n') } catch {}
@@ -315,9 +318,53 @@ ipcMain.handle('burn', async (event, { inputPath, assPath, outputPath, codec, cr
   if (!ff) throw new Error('ffmpeg not found')
 
   const escaped = assPath.replace(/\\/g, '/').replace(/:/g, '\\\\:')
-  const args = ['-y', '-i', inputPath, '-vf', 'ass=' + escaped, '-c:v', codec]
-  if (codec !== 'copy') args.push('-crf', String(crf), '-preset', preset)
-  args.push('-c:a', 'copy', '-c:s', 'copy', outputPath)
+
+  // Probe original to match codec, bitrate and pixel format exactly
+  let origCodec = codec, origBitrate = null, origPixFmt = 'yuv420p', origLevel = null, origProfile = null
+  try {
+    const fp = findBinary('ffprobe')
+    if (fp) {
+      const probe = spawnSync(fp, [
+        '-v', 'quiet', '-select_streams', 'v:0',
+        '-show_entries', 'stream=codec_name,bit_rate,pix_fmt,level,profile',
+        '-of', 'json', inputPath
+      ], { encoding: 'utf8' })
+      const info = JSON.parse(probe.stdout || '{}')
+      const vs   = info.streams?.[0]
+      if (vs) {
+        origCodec   = vs.codec_name === 'h264' ? 'libx264' : vs.codec_name === 'hevc' ? 'libx265' : codec
+        origBitrate = parseInt(vs.bit_rate) || null
+        origPixFmt  = vs.pix_fmt || 'yuv420p'
+        origLevel   = vs.level   || null
+        origProfile = vs.profile || null
+        dbg('[Burn] Source: codec=' + vs.codec_name + ' bitrate=' + origBitrate + ' pix_fmt=' + origPixFmt)
+      }
+    }
+  } catch(e) { dbg('[Burn] Probe error:', e.message) }
+
+  // Re-encode video with subtitle filter, using source quality settings
+  // CRF 17 = visually lossless — indistinguishable from original to human eye
+  // We must re-encode to burn in the subtitle filter; everything else is copied.
+  const args = [
+    '-y', '-i', inputPath,
+    '-map', '0:v:0',  // video
+    '-map', '0:a',    // all audio streams unchanged
+    // omit subtitle streams — baked into video now
+    '-vf', 'ass=' + escaped,
+    '-c:v', origCodec,
+    '-crf', String(crf),           // user-chosen quality (default 23, lower = better)
+    '-preset', preset,
+    '-pix_fmt', origPixFmt,
+  ]
+  // Match original bitrate as ceiling to avoid file growing larger than source
+  if (origBitrate) {
+    args.push('-maxrate', String(Math.round(origBitrate * 1.1)))
+    args.push('-bufsize', String(origBitrate * 2))
+  }
+  // Match original H.264 profile/level if known
+  if (origProfile && origCodec === 'libx264') args.push('-profile:v', origProfile.toLowerCase().replace(' ', ''))
+  if (origLevel   && origCodec === 'libx264') args.push('-level:v', String(origLevel / 10))
+  args.push('-c:a', 'copy', outputPath)
 
   dbg('[Burn] Starting:', args.join(' '))
 
