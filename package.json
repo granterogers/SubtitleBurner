@@ -1,6 +1,7 @@
+
 {
   "name": "subtitle-burner",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Burn subtitles into MKV/MP4 with real-time preview",
   "main": "main.js",
   "scripts": {
