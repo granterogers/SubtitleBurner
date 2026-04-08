@@ -537,7 +537,11 @@ function reprocessSubs() {
     const ev = state.rawSubEvents[i]
     if (i>0 && (ev.start-state.rawSubEvents[i-1].end)>silence) buffer.length=0
     for (const c of wordWrap(ev.lines.join(' '),maxChars)) { buffer.push(c); if(buffer.length>maxLines) buffer.shift() }
-    const displayEnd = i+1<state.rawSubEvents.length ? state.rawSubEvents[i+1].start : ev.end
+    // Only extend display to next subtitle's start if the gap is within the silence threshold
+    // If it's a long silence, let the overlay disappear at the natural end of this event
+    const nextEv = i+1 < state.rawSubEvents.length ? state.rawSubEvents[i+1] : null
+    const gapToNext = nextEv ? nextEv.start - ev.end : Infinity
+    const displayEnd = (nextEv && gapToNext <= silence) ? nextEv.start : ev.end
     output.push({ start:ev.start, end:displayEnd, speaker:ev.speaker, lines:[...buffer] })
   }
   state.subEvents = output
