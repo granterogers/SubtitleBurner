@@ -2,17 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' file:; media-src 'self' file: blob:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' file:; media-src 'self' file: blob: http://127.0.0.1:*;">
 <title>SubtitleBurner</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#1a1a1a;--panel:#222;--border:#383838;--accent:#4a90d9;--danger:#c94040;--success:#4ad94a;--text:#e0e0e0;--muted:#777;--input-bg:#2c2c2c;--radius:5px}
+:root{--bg:#1a1a1a;--panel:#222;--border:#383838;--accent:#4a90d9;--danger:#c94040;--success:#4ad94a;--text:#e0e0e0;--muted:#777;--input-bg:#2c2c2c;--radius:5px;--debug-bg:#111}
 body{background:var(--bg);color:var(--text);font:13px/1.4 'Segoe UI',system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
 header{padding:7px 12px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
 header h1{font-size:13px;font-weight:600}
-#ffmpeg-status{margin-left:auto;font-size:11px}
+#ffmpeg-status{font-size:11px}
 #ffmpeg-status.ok{color:var(--success)}#ffmpeg-status.error{color:var(--danger)}
-.layout{display:flex;flex:1;overflow:hidden}
+#debug-toggle{margin-left:auto;font-size:11px;background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);padding:3px 8px;cursor:pointer}
+#debug-toggle:hover{color:var(--text)}
+.layout{display:flex;flex:1;overflow:hidden;flex-direction:column}
+.top-area{display:flex;flex:1;overflow:hidden;min-height:0}
 .sidebar{width:290px;min-width:260px;background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0}
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .section{padding:8px 10px;border-bottom:1px solid var(--border)}
@@ -31,36 +34,19 @@ button:hover:not(:disabled){background:#363636}
 button:disabled{opacity:.4;cursor:default}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 button.primary:hover:not(:disabled){background:#5aa0e8}
+button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
 .radio-group{display:flex;gap:8px;flex-wrap:wrap}
 .radio-group label,.cb-label{display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text);font-size:12px;width:auto}
 input[type=checkbox],input[type=radio]{accent-color:var(--accent);cursor:pointer}
-/* Collapsible */
 .coll-header{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
 .coll-arrow{font-size:10px;color:var(--muted);transition:transform .2s;display:inline-block}
 .coll-body{overflow:hidden;max-height:0;transition:max-height .25s ease}
 .coll-body.open{max-height:220px}
-/* Video area */
 .video-area{flex:1;background:#000;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0}
 video{max-width:100%;max-height:100%;display:block}
 #no-video{color:#2d2d2d;font-size:14px;text-align:center;pointer-events:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
 #no-video span{display:block;font-size:36px;margin-bottom:6px}
-/* Sub overlay: positioned bottom-centre of the video-area,
-   font-size in vw so it scales with window width rather than being a fixed px */
-#sub-overlay{
-  position:absolute;
-  bottom:6%;
-  left:50%;
-  transform:translateX(-50%);
-  text-align:center;
-  pointer-events:none;
-  max-width:95%;
-  width:max-content;
-  border-radius:4px;
-  display:none;
-  font-family:Arial,sans-serif;
-  white-space:nowrap;
-}
-/* Controls */
+#sub-overlay{position:absolute;bottom:6%;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;max-width:95%;width:max-content;border-radius:4px;display:none;font-family:Arial,sans-serif;white-space:nowrap}
 .controls{background:var(--panel);border-top:1px solid var(--border);padding:6px 10px;flex-shrink:0}
 .ctrl-row1{display:flex;align-items:center;gap:8px;margin-bottom:5px}
 .seek-bar{flex:1;accent-color:var(--accent);cursor:pointer}
@@ -71,7 +57,6 @@ video{max-width:100%;max-height:100%;display:block}
 .vol-row{display:flex;align-items:center;gap:5px;margin-left:auto}
 .vol-row label{color:var(--muted);font-size:12px}
 .vol-row input{width:75px}
-/* Status */
 #status-text{font-size:11px;color:var(--muted)}
 progress#progress-bar{width:100%;height:5px;border-radius:3px;display:none;margin-bottom:3px}
 progress#progress-bar::-webkit-progress-bar{background:var(--border);border-radius:3px}
@@ -80,6 +65,18 @@ progress#progress-bar::-webkit-progress-value{background:var(--accent);border-ra
 #colour-swatch{width:20px;height:20px;border-radius:3px;border:1px solid var(--border);cursor:pointer;flex-shrink:0}
 #speaker-colours-panel{margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
 #speaker-swatches{margin-top:4px}
+
+/* Debug panel */
+#debug-panel{height:180px;flex-shrink:0;background:var(--debug-bg);border-top:2px solid var(--accent);display:none;flex-direction:column}
+#debug-panel.visible{display:flex}
+#debug-header{display:flex;align-items:center;gap:8px;padding:4px 8px;background:#1a1a1a;border-bottom:1px solid var(--border);flex-shrink:0}
+#debug-header span{font-size:11px;font-weight:700;color:var(--accent);letter-spacing:.05em}
+#debug-header button{font-size:10px;padding:2px 6px;margin-left:auto}
+#debug-log{flex:1;overflow-y:auto;padding:6px 8px;font-family:'Consolas','Courier New',monospace;font-size:11px;line-height:1.5;color:#aaa;white-space:pre-wrap;word-break:break-all}
+#debug-log .err{color:#e07070}
+#debug-log .warn{color:#e0c070}
+#debug-log .stream{color:#70b0e0}
+#debug-log .ok{color:#70e070}
 </style>
 </head>
 <body>
@@ -87,9 +84,11 @@ progress#progress-bar::-webkit-progress-value{background:var(--accent);border-ra
 <header>
   <h1>🎬 SubtitleBurner</h1>
   <span id="ffmpeg-status">Checking ffmpeg...</span>
+  <button id="debug-toggle" onclick="toggleDebug()">🐛 Debug</button>
 </header>
 
 <div class="layout">
+<div class="top-area">
 <aside class="sidebar">
 
   <div class="section">
@@ -177,7 +176,6 @@ progress#progress-bar::-webkit-progress-value{background:var(--accent);border-ra
     </div>
   </div>
 
-  <!-- Encoding — collapsible -->
   <div class="section">
     <div class="coll-header" onclick="toggleSection(this,'encoding-body')">
       <div class="section-title" style="margin-bottom:0">Encoding</div>
@@ -248,7 +246,19 @@ progress#progress-bar::-webkit-progress-value{background:var(--accent);border-ra
     </div>
   </div>
 </div>
+</div><!-- .top-area -->
+
+<!-- Debug panel -->
+<div id="debug-panel">
+  <div id="debug-header">
+    <span>🐛 DEBUG LOG</span>
+    <button onclick="copyDebugLog()">Copy</button>
+    <button onclick="clearDebugLog()">Clear</button>
+  </div>
+  <div id="debug-log"></div>
 </div>
+
+</div><!-- .layout -->
 
 <script>
 function toggleSection(header, bodyId) {
@@ -256,6 +266,33 @@ function toggleSection(header, bodyId) {
   const arrow = header.querySelector('.coll-arrow')
   body.classList.toggle('open')
   arrow.style.transform = body.classList.contains('open') ? 'rotate(180deg)' : ''
+}
+function toggleDebug() {
+  const panel = document.getElementById('debug-panel')
+  panel.classList.toggle('visible')
+  if (panel.classList.contains('visible')) scrollDebugToBottom()
+}
+function scrollDebugToBottom() {
+  const log = document.getElementById('debug-log')
+  log.scrollTop = log.scrollHeight
+}
+function appendDebugLine(line) {
+  const log = document.getElementById('debug-log')
+  const span = document.createElement('span')
+  if (line.includes('ERROR') || line.includes('error') || line.includes('Error')) span.className = 'err'
+  else if (line.includes('[Stream]') || line.includes('[FFmpeg]')) span.className = 'stream'
+  else if (line.includes('ok') || line.includes('OK') || line.includes('ready') || line.includes('Complete')) span.className = 'ok'
+  span.textContent = line + '\n'
+  log.appendChild(span)
+  // Auto-scroll if near bottom
+  if (log.scrollHeight - log.scrollTop < log.clientHeight + 60) scrollDebugToBottom()
+}
+async function copyDebugLog() {
+  const full = await window.api.getDebugLog()
+  navigator.clipboard.writeText(full).then(() => setStatus('Debug log copied to clipboard'))
+}
+function clearDebugLog() {
+  document.getElementById('debug-log').innerHTML = ''
 }
 </script>
 <script src="app.js"></script>
