@@ -590,17 +590,25 @@ function buildAssFile() {
   out += 'Style: Default,Arial,'+scaledFontSize+','+primCol+',&H000000FF,&H00000000,'+backCol+',0,0,0,0,100,'+assScaleY+',0,0,'+borderSt+',1,0,2,'+scaledPad+','+scaledPad+','+scaledPad+',1\n\n'
   out += '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'
 
+  // Emit each line as a separate Dialogue event with MarginV offsets so that
+  // line spacing is controlled precisely. Lines stack bottom-up (last line at
+  // base margin, earlier lines progressively higher).
+  // lineStep = scaled font size * (lineSpacing/100) — pixels between baselines
+  const lineStep = Math.round(scaledFontSize * (lineSpacing / 100))
+
   for (const ev of state.subEvents) {
-    let text
-    // All lines use the primary style colour — no per-line colour overrides
-    if (state.speakerEnabled && ev.speaker) {
-      const sc = getSpeakerColour(ev.speaker).replace('#','')
-      const spCol = '&H00'+sc.slice(4,6)+sc.slice(2,4)+sc.slice(0,2)
-      text = ev.lines.map(l => '{\\c'+spCol+'}'+l).join('\\N')
-    } else {
-      text = ev.lines.join('\\N')
+    const n = ev.lines.length
+    const colTag = (state.speakerEnabled && ev.speaker)
+      ? '{\\c&H00'+getSpeakerColour(ev.speaker).replace('#','').slice(4,6)
+          +getSpeakerColour(ev.speaker).replace('#','').slice(2,4)
+          +getSpeakerColour(ev.speaker).replace('#','').slice(0,2)+'}'
+      : ''
+    for (let i = 0; i < n; i++) {
+      // i=0 is the oldest/topmost line; i=n-1 is newest/bottom line
+      // bottom line sits at scaledPad; each line above adds one lineStep
+      const marginV = scaledPad + (n - 1 - i) * lineStep
+      out += 'Dialogue: 0,'+fmtAss(ev.start)+','+fmtAss(ev.end)+',Default,,0,0,'+marginV+',,'+colTag+ev.lines[i]+'\n'
     }
-    out += 'Dialogue: 0,'+fmtAss(ev.start)+','+fmtAss(ev.end)+',Default,,0,0,0,,'+text+'\n'
   }
   return out
 }
