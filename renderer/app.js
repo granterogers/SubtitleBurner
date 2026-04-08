@@ -8,6 +8,8 @@ const state = {
   isSeeking:      false,
   videoInfo:      null,
   sampleTimer:    null,
+  seekTimer:      null,
+  seekTargetPos:  null,
   streamBaseUrl:  null,
   speakerColours: {},
   speakerEnabled: false,
@@ -54,9 +56,16 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   showPreview()
 
+  // Wire up debug log from main process
+  window.api.onDebugLog(appendDebugLine)
+  window.api.getDebugLog().then(log => {
+    if (log) log.split('\n').filter(Boolean).forEach(appendDebugLine)
+  })
+
 })
 
 function setStatus(msg) { document.getElementById('status-text').textContent = msg }
+function dbgLog(msg) { try { appendDebugLine('[App] ' + msg) } catch {} }
 
 // ── Colour helpers ─────────────────────────────────────────────────────────
 function getSelectedFontColour() {
@@ -296,9 +305,14 @@ async function loadVideo(filePath) {
 }
 
 function onVideoLoaded() {
-  state.videoDuration = document.getElementById('player').duration
+  const playerDur = document.getElementById('player').duration
+  // Prefer ffprobe duration (set earlier in scanTracks), fall back to player.duration
+  if (!state.videoDuration || state.videoDuration < 1) {
+    state.videoDuration = playerDur
+  }
   updateTimeDisplay(0)
   setStatus('Ready — ' + fmt(state.videoDuration))
+  dbgLog('Duration: ffprobe=' + state.videoDuration.toFixed(1) + 's player=' + (playerDur||0).toFixed(1) + 's')
 }
 
 function onVideoEnded() {
@@ -316,12 +330,8 @@ function togglePlay() {
 function stopVideo() {
   const p = document.getElementById('player')
   p.pause()
-  if (state.streamBaseUrl) {
-    p.src = state.streamBaseUrl
-    p.load()
-  } else {
-    p.currentTime = 0
-  }
+  // Don't reset src — just seek to beginning
+  commitSeek(0)
   showPreview()
 }
 
@@ -333,30 +343,59 @@ function setVolume(v) {
 // ── Seek ───────────────────────────────────────────────────────────────────
 function onSeekInput() {
   state.isSeeking = true
-  updateTimeDisplay(document.getElementById('seek-bar').value / 1000 * (document.getElementById('player').duration || 0))
+  const dur = state.videoDuration || document.getElementById('player').duration || 0
+  const pos = document.getElementById('seek-bar').value / 1000 * dur
+  updateTimeDisplay(pos)
 }
 
 function onSeekChange() {
-  const pos = document.getElementById('seek-bar').value / 1000 * (document.getElementById('player').duration || 0)
-  const p   = document.getElementById('player')
+  // Only fires on mouseup/touchend — commit the seek
+  const dur = state.videoDuration || document.getElementById('player').duration || 0
+  const pos = document.getElementById('seek-bar').value / 1000 * dur
+  state.isSeeking = false
+  commitSeek(pos)
+}
 
-  if (state.streamBaseUrl) {
-    // Re-request stream from new position — much more reliable than currentTime
+function commitSeek(pos) {
+  const p = document.getElementById('player')
+  if (!state.streamBaseUrl) {
+    state.seekTargetPos = null
+    p.currentTime = pos
+    return
+  }
+  const buffered = p.buffered
+  let bufferedEnd = 0
+  for (let i = 0; i < buffered.length; i++) {
+    if (buffered.start(i) <= pos && buffered.end(i) > bufferedEnd) {
+      bufferedEnd = buffered.end(i)
+    }
+  }
+  if (pos <= bufferedEnd) {
+    // Position is already buffered — just jump to it, no stream restart needed
+    state.seekTargetPos = null  // No offset needed, currentTime is authoritative
+    p.currentTime = pos
+  } else {
+    // Need to restart stream from new position
     const wasPlaying = !p.paused
+    p.pause()
+    // Track intended position for subtitle sync while currentTime catches up
+    state.seekTargetPos = pos
     const url = state.streamBaseUrl + '&t=' + pos.toFixed(2)
     p.src = url
     p.load()
-    if (wasPlaying) p.play()
-  } else {
-    p.currentTime = pos
+    if (wasPlaying) p.play().catch(() => {})
   }
-  state.isSeeking = false
 }
 
 function onTimeUpdate() {
   if (state.isSeeking) return
   const p = document.getElementById('player')
-  const pos = p.currentTime, dur = p.duration || 0
+  const rawPos = p.currentTime
+  // After a stream restart, currentTime starts from 0 and climbs.
+  // Use seekTargetPos as an offset so we report the correct wall-clock position.
+  const offset = state.seekTargetPos || 0
+  const pos = rawPos + offset
+  const dur = state.videoDuration || 0
   document.getElementById('seek-bar').value = dur > 0 ? pos / dur * 1000 : 0
   updateTimeDisplay(pos)
   const ev = state.subEvents.find(e => pos >= e.start && pos < e.end)
@@ -365,7 +404,8 @@ function onTimeUpdate() {
 }
 
 function updateTimeDisplay(pos) {
-  document.getElementById('time-display').textContent = fmt(pos) + ' / ' + fmt(document.getElementById('player').duration || state.videoDuration || 0)
+  const dur = state.videoDuration || document.getElementById('player').duration || 0
+  document.getElementById('time-display').textContent = fmt(pos) + ' / ' + fmt(dur)
 }
 
 function fmt(s) {
@@ -380,6 +420,12 @@ async function scanTracks() {
   try {
     const info = await window.api.probeFile(state.videoPath)
     state.videoInfo = info
+    // Store duration from ffprobe — more reliable than player.duration for streamed content
+    const fmtDur = parseFloat(info.format?.duration)
+    if (fmtDur > 0) {
+      state.videoDuration = fmtDur
+      dbgLog('Duration from ffprobe: ' + fmtDur.toFixed(1) + 's')
+    }
     const sel = document.getElementById('track-select')
     sel.innerHTML = '<option value="">— select track —</option>'
     const tracks = (info.streams||[]).filter(s => s.codec_type === 'subtitle')
@@ -397,7 +443,10 @@ async function scanTracks() {
 async function loadTrack(idx) {
   setStatus('Extracting track ' + idx + '...')
   try {
-    loadSubContent(await window.api.extractSubs({ filePath: state.videoPath, trackIndex: idx }), null)
+    // Find codec name for this track from videoInfo
+    const trackInfo = (state.videoInfo?.streams || []).find(s => s.index === idx)
+    const codecName = trackInfo?.codec_name || ''
+    loadSubContent(await window.api.extractSubs({ filePath: state.videoPath, trackIndex: idx, codecName }), null)
     document.getElementById('burn-btn').disabled = false
     setStatus('Track ' + idx + ' loaded — ' + state.subEvents.length + ' events')
   } catch(e) { setStatus('Extract error: ' + e.message) }
@@ -405,7 +454,18 @@ async function loadTrack(idx) {
 
 // ── Subtitle parsing ───────────────────────────────────────────────────────
 function loadSubContent(content, filePath) {
-  const ext = filePath ? filePath.split('.').pop().toLowerCase() : 'ass'
+  // Auto-detect format from content rather than relying on extension
+  // When extracted from MKV via ffmpeg, filePath is null but content could be either format
+  let ext = filePath ? filePath.split('.').pop().toLowerCase() : null
+  if (!ext) {
+    // Detect: ASS files have [Script Info] header; SRT files start with a number
+    if (content.includes('[Script Info]') || content.includes('[V4+ Styles]')) {
+      ext = 'ass'
+    } else {
+      ext = 'srt'
+    }
+    dbgLog('Auto-detected subtitle format: ' + ext)
+  }
   state.rawSubEvents = (ext === 'ass' || ext === 'ssa') ? parseAss(content) : parseSrt(content)
   state.speakerColours = {}
   // Only pre-assign colours if speaker mode is enabled
@@ -414,6 +474,11 @@ function loadSubContent(content, filePath) {
   }
   reprocessSubs()
   renderSpeakerSwatches()
+  dbgLog('Subtitle events loaded: ' + state.rawSubEvents.length + ' raw, ' + state.subEvents.length + ' processed')
+  if (state.rawSubEvents.length > 0) {
+    const s = state.rawSubEvents[0]
+    dbgLog('First event: ' + s.start.toFixed(2) + 's — ' + (s.lines||[]).join(' | ').slice(0,60))
+  }
 }
 
 function parseSrt(text) {
