@@ -590,25 +590,27 @@ function buildAssFile() {
   out += 'Style: Default,Arial,'+scaledFontSize+','+primCol+',&H000000FF,&H00000000,'+backCol+',0,0,0,0,100,'+assScaleY+',0,0,'+borderSt+',1,0,2,'+scaledPad+','+scaledPad+','+scaledPad+',1\n\n'
   out += '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'
 
-  // Emit each line as a separate Dialogue event with MarginV offsets so that
-  // line spacing is controlled precisely. Lines stack bottom-up (last line at
-  // base margin, earlier lines progressively higher).
-  // lineStep = scaled font size * (lineSpacing/100) — pixels between baselines
-  const lineStep = Math.round(scaledFontSize * (lineSpacing / 100))
+  // Single Dialogue event per subtitle — one unified background box.
+  // Line spacing is controlled by inserting a transparent spacer line between
+  // real lines: {\fs<N} <space> {\r} resets back to normal for next line.
+  // spacerSize scales with lineSpacing slider — 145=default(no spacer), higher=bigger gap.
+  const spacerSize = Math.max(1, Math.round(scaledFontSize * ((lineSpacing - 100) / 100)))
 
   for (const ev of state.subEvents) {
-    const n = ev.lines.length
     const colTag = (state.speakerEnabled && ev.speaker)
       ? '{\\c&H00'+getSpeakerColour(ev.speaker).replace('#','').slice(4,6)
           +getSpeakerColour(ev.speaker).replace('#','').slice(2,4)
           +getSpeakerColour(ev.speaker).replace('#','').slice(0,2)+'}'
       : ''
-    for (let i = 0; i < n; i++) {
-      // i=0 is the oldest/topmost line; i=n-1 is newest/bottom line
-      // bottom line sits at scaledPad; each line above adds one lineStep
-      const marginV = scaledPad + (n - 1 - i) * lineStep
-      out += 'Dialogue: 0,'+fmtAss(ev.start)+','+fmtAss(ev.end)+',Default,,0,0,'+marginV+',,'+colTag+ev.lines[i]+'\n'
+    let text
+    if (ev.lines.length === 1) {
+      text = colTag + ev.lines[0]
+    } else {
+      // Join lines with a tiny invisible spacer line between each pair
+      const spacer = '{\\fs'+spacerSize+'} {\\r}'
+      text = ev.lines.map(l => colTag + l).join('\\N' + spacer + '\\N')
     }
+    out += 'Dialogue: 0,'+fmtAss(ev.start)+','+fmtAss(ev.end)+',Default,,0,0,'+scaledPad+',,'+text+'\n'
   }
   return out
 }
