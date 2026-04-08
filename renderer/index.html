@@ -128,6 +128,11 @@ progress#progress-bar::-webkit-progress-value{background:var(--accent);border-ra
       <input type="range" id="padding" min="0" max="30" value="8" oninput="updateLabel(this,'padding-val');schedulePreviewRefresh()">
       <span class="val" id="padding-val">8</span>
     </div>
+    <div class="row">
+      <label>Line Spacing</label>
+      <input type="range" id="line-spacing" min="100" max="200" value="145" oninput="document.getElementById('line-spacing-val').textContent=this.value+'%';schedulePreviewRefresh()">
+      <span class="val" id="line-spacing-val">145%</span>
+    </div>
     <div style="margin:6px 0 4px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Font Colour</div>
       <div class="radio-group">
@@ -193,8 +198,8 @@ progress#progress-bar::-webkit-progress-value{background:var(--accent);border-ra
       </div>
       <div class="row">
         <label>CRF Quality</label>
-        <input type="range" id="crf" min="18" max="28" value="23" oninput="updateLabel(this,'crf-val')">
-        <span class="val" id="crf-val">23</span>
+        <input type="range" id="crf" min="17" max="28" value="17" oninput="updateLabel(this,'crf-val')">
+        <span class="val" id="crf-val">17</span>
       </div>
       <div class="row">
         <label>Preset</label>
