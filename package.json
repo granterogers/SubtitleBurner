@@ -1,0 +1,25 @@
+{
+  "name": "subtitle-burner",
+  "version": "1.0.0",
+  "description": "Burn subtitles into MKV/MP4 with real-time preview",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable --x64"
+  },
+  "build": {
+    "appId": "com.granterogers.subtitleburner",
+    "productName": "SubtitleBurner",
+    "win": {
+      "target": [{ "target": "portable", "arch": ["x64"] }]
+    },
+    "files": ["main.js", "renderer/**/*"],
+    "portable": {
+      "artifactName": "SubtitleBurner.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}
