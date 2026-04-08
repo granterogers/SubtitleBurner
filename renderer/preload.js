@@ -13,8 +13,13 @@ contextBridge.exposeInMainWorld('api', {
   getStreamUrl:   (p)     => ipcRenderer.invoke('get-stream-url', p),
   cancelBurn:     ()      => ipcRenderer.invoke('cancel-burn'),
   burn:           (o)     => ipcRenderer.invoke('burn', o),
+  getDebugLog:    ()      => ipcRenderer.invoke('get-debug-log'),
   onBurnProgress: (cb)    => {
     ipcRenderer.on('burn-progress', (_, data) => cb(data))
     return () => ipcRenderer.removeAllListeners('burn-progress')
+  },
+  onDebugLog: (cb) => {
+    ipcRenderer.on('debug-log', (_, line) => cb(line))
+    return () => ipcRenderer.removeAllListeners('debug-log')
   }
 })
