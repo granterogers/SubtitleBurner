@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' file:; media-src 'self' file: blob:;">
+<title>SubtitleBurner</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#1a1a1a;--panel:#222;--border:#383838;--accent:#4a90d9;--danger:#c94040;--success:#4ad94a;--text:#e0e0e0;--muted:#777;--input-bg:#2c2c2c;--radius:5px}
+body{background:var(--bg);color:var(--text);font:13px/1.4 'Segoe UI',system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{padding:7px 12px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
+header h1{font-size:13px;font-weight:600}
+#ffmpeg-status{margin-left:auto;font-size:11px}
+#ffmpeg-status.ok{color:var(--success)}#ffmpeg-status.error{color:var(--danger)}
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:290px;min-width:260px;background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.section{padding:8px 10px;border-bottom:1px solid var(--border)}
+.section-title{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.row{display:flex;align-items:center;gap:5px;margin-bottom:5px}
+.row:last-child{margin-bottom:0}
+.row label{width:84px;flex-shrink:0;color:var(--muted);font-size:12px}
+.val{min-width:32px;text-align:right;font-size:11px;color:var(--text)}
+input[type=text],select{background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:4px 6px;font:inherit;width:100%}
+input[type=range]{flex:1;accent-color:var(--accent);cursor:pointer}
+select{cursor:pointer}
+.file-row{display:flex;gap:5px}
+.file-row input{flex:1;min-width:0;font-size:11px}
+button{background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:4px 9px;font:inherit;cursor:pointer;white-space:nowrap}
+button:hover:not(:disabled){background:#363636}
+button:disabled{opacity:.4;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.primary:hover:not(:disabled){background:#5aa0e8}
+.radio-group{display:flex;gap:8px;flex-wrap:wrap}
+.radio-group label,.cb-label{display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text);font-size:12px;width:auto}
+input[type=checkbox],input[type=radio]{accent-color:var(--accent);cursor:pointer}
+/* Collapsible */
+.coll-header{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+.coll-arrow{font-size:10px;color:var(--muted);transition:transform .2s;display:inline-block}
+.coll-body{overflow:hidden;max-height:0;transition:max-height .25s ease}
+.coll-body.open{max-height:220px}
+/* Video area */
+.video-area{flex:1;background:#000;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0}
+video{max-width:100%;max-height:100%;display:block}
+#no-video{color:#2d2d2d;font-size:14px;text-align:center;pointer-events:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
+#no-video span{display:block;font-size:36px;margin-bottom:6px}
+/* Sub overlay: positioned bottom-centre of the video-area,
+   font-size in vw so it scales with window width rather than being a fixed px */
+#sub-overlay{
+  position:absolute;
+  bottom:6%;
+  left:50%;
+  transform:translateX(-50%);
+  text-align:center;
+  pointer-events:none;
+  max-width:95%;
+  width:max-content;
+  border-radius:4px;
+  display:none;
+  font-family:Arial,sans-serif;
+  white-space:nowrap;
+}
+/* Controls */
+.controls{background:var(--panel);border-top:1px solid var(--border);padding:6px 10px;flex-shrink:0}
+.ctrl-row1{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.seek-bar{flex:1;accent-color:var(--accent);cursor:pointer}
+#time-display{font-size:11px;color:var(--muted);min-width:108px;text-align:right}
+.ctrl-row2{display:flex;align-items:center;gap:6px}
+.play-btns{display:flex;gap:3px}
+.play-btns button{padding:3px 9px;font-size:14px}
+.vol-row{display:flex;align-items:center;gap:5px;margin-left:auto}
+.vol-row label{color:var(--muted);font-size:12px}
+.vol-row input{width:75px}
+/* Status */
+#status-text{font-size:11px;color:var(--muted)}
+progress#progress-bar{width:100%;height:5px;border-radius:3px;display:none;margin-bottom:3px}
+progress#progress-bar::-webkit-progress-bar{background:var(--border);border-radius:3px}
+progress#progress-bar::-webkit-progress-value{background:var(--accent);border-radius:3px}
+.hint{font-size:10px;color:var(--muted);margin-top:3px}
+#colour-swatch{width:20px;height:20px;border-radius:3px;border:1px solid var(--border);cursor:pointer;flex-shrink:0}
+#speaker-colours-panel{margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
+#speaker-swatches{margin-top:4px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎬 SubtitleBurner</h1>
+  <span id="ffmpeg-status">Checking ffmpeg...</span>
+</header>
+
+<div class="layout">
+<aside class="sidebar">
+
+  <div class="section">
+    <div class="section-title">Input File</div>
+    <div class="file-row">
+      <input type="text" id="input-path" placeholder="No file selected" readonly>
+      <button onclick="browseVideo()">Browse</button>
+    </div>
+    <div class="file-row" style="margin-top:5px">
+      <input type="text" id="sub-path" placeholder="External subtitle (optional)" readonly style="color:var(--muted)">
+      <button onclick="browseSub()">Sub</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Subtitle Track</div>
+    <div class="file-row">
+      <select id="track-select" style="flex:1"><option value="">— scan for tracks —</option></select>
+      <button onclick="scanTracks()">Scan</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sectiontle">Subtitle Style</div>
+    <div class="row">
+      <label>Font Size</label>
+      <input type="range" id="font-size" min="14" max="72" value="37" oninput="updateLabel(this,'font-size-val');schedulePreviewRefresh()">
+      <span class="val" id="font-size-val">37</span>
+    </div>
+    <div class="row">
+      <label>Chars/Line</label>
+      <input type="range" id="max-chars" min="20" max="90" value="65" oninput="updateLabel(this,'max-chars-val');reprocessSubs()">
+      <span class="val" id="max-chars-val">65</span>
+    </div>
+    <div class="row">
+      <label>Padding</label>
+      <input type="range" id="padding" min="0" max="30" value="8" oninput="updateLabel(this,'padding-val');schedulePreviewRefresh()">
+      <span class="val" id="padding-val">8</span>
+    </div>
+    <div style="margin:6px 0 4px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Font Colour</div>
+      <div class="radio-group">
+        <label><input type="radio" name="font-colour" value="white" checked> White</label>
+        <label><input type="radio" name="font-colour" value="yellow"> Yellow</label>
+        <label><input type="radio" name="font-colour" value="custom"> Custom</label>
+        <div id="colour-swatch" style="background:#ffffff" onclick="pickColour()" title="Pick custom colour"></div>
+      </div>
+    </div>
+    <div style="margin:6px 0 4px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Background</div>
+      <div class="radio-group">
+        <label><input type="radio" name="bg-style" value="solid" checked> Solid</label>
+        <label><input type="radio" name="bg-style" value="none"> None</label>
+      </div>
+    </div>
+    <div class="row">
+      <label>BG Opacity</label>
+      <input type="range" id="bg-opacity" min="0" max="100" value="80" oninput="updateLabel(this,'bg-opacity-val');schedulePreviewRefresh()">
+      <span class="val" id="bg-opacity-val">80%</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Easy Reading</div>
+    <div class="row"><label class="cb-label" style="width:auto;flex:1"><input type="checkbox" id="rolling-enabled" checked> Rolling buffer</label></div>
+    <div class="row">
+      <label>Lines visible</label>
+      <input type="range" id="buffer-lines" min="2" max="5" value="3" oninput="updateLabel(this,'buffer-lines-val');reprocessSubs()">
+      <span class="val" id="buffer-lines-val">3</span>
+    </div>
+    <div class="row">
+      <label>Clear silence</label>
+      <input type="range" id="silence-gap" min="5" max="60" value="20" oninput="updateLabel(this,'silence-gap-val',0.1);reprocessSubs()">
+      <span class="val" id="silence-gap-val">2.0s</span>
+    </div>
+    <div class="hint">Newest line = bright &nbsp;/&nbsp; older lines fade</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Speaker Colours</div>
+    <label class="cb-label"><input type="checkbox" id="speaker-colours-enabled"> Per-speaker colours (ASS files)</label>
+    <div id="speaker-colours-panel" style="display:none">
+      <div class="hint" style="margin-bottom:4px">Auto-assigned from Name field. Click swatch to change.</div>
+      <div id="speaker-swatches"></div>
+    </div>
+  </div>
+
+  <!-- Encoding — collapsible -->
+  <div class="section">
+    <div class="coll-header" onclick="toggleSection(this,'encoding-body')">
+      <div class="section-title" style="margin-bottom:0">Encoding</div>
+      <span class="coll-arrow">▼</span>
+    </div>
+    <div class="coll-body" id="encoding-body">
+      <div style="height:7px"></div>
+      <div class="row">
+        <label>Codec</label>
+        <select id="codec" style="flex:1">
+          <option value="libx264" selected>H.264</option>
+          <option value="libx265">H.265</option>
+          <option value="copy">Copy (no re-encode)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>CRF Quality</label>
+        <input type="range" id="crf" min="18" max="28" value="23" oninput="updateLabel(this,'crf-val')">
+        <span class="val" id="crf-val">23</span>
+      </div>
+      <div class="row">
+        <label>Preset</label>
+        <select id="preset" style="flex:1">
+          <option>ultrafast</option><option>superfast</option><option>veryfast</option>
+          <option>faster</option><option>fast</option><option selected>medium</option>
+          <option>slow</option><option>slower</option><option>veryslow</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Output</div>
+    <div class="file-row" style="margin-bottom:6px">
+      <input type="text" id="output-path" placeholder="Output file path">
+      <button onclick="browseOutput()">...</button>
+    </div>
+    <button id="burn-btn" class="primary" style="width:100%;padding:8px;font-size:13px" onclick="startBurn()" disabled>🔥 Burn Subtitles</button>
+  </div>
+
+  <div class="section" style="border-bottom:none">
+    <progress id="progress-bar" value="0" max="100"></progress>
+    <div id="status-text">Ready</div>
+  </div>
+
+</aside>
+
+<div class="main">
+  <div class="video-area" id="video-area">
+    <div id="no-video"><span>🎬</span>Open a video file to begin</div>
+    <video id="player" style="display:none" preload="metadata"></video>
+    <div id="sub-overlay"></div>
+  </div>
+  <div class="controls">
+    <div class="ctrl-row1">
+      <input type="range" class="seek-bar" id="seek-bar" min="0" max="1000" value="0" oninput="onSeekInput()" onchange="onSeekChange()">
+      <span id="time-display">0:00:00 / 0:00:00</span>
+    </div>
+    <div class="ctrl-row2">
+      <div class="play-btns">
+        <button id="btn-play" onclick="togglePlay()" disabled>▶</button>
+        <button id="btn-stop" onclick="stopVideo()" disabled>⏹</button>
+      </div>
+      <div class="vol-row">
+        <label>🔊</label>
+        <input type="range" id="volume" min="0" max="1" step="0.05" value="0.9" oninput="setVolume(this.value)">
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+function toggleSection(header, bodyId) {
+  const body = document.getElementById(bodyId)
+  const arrow = header.querySelector('.coll-arrow')
+  body.classList.toggle('open')
+  arrow.style.transform = body.classList.contains('open') ? 'rotate(180deg)' : ''
+}
+</script>
+<script src="app.js"></script>
+</body>
+</html>
