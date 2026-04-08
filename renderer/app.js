@@ -90,22 +90,13 @@ function getSpeakerColour(name) {
 
 // ── Build subtitle HTML ─────────────────────────────────────────────────────
 function buildSubHtml(lines, speaker) {
-  const rolling = document.getElementById('rolling-enabled').checked
-  const baseCol = getSelectedFontColour()
-  const maxAge  = lines.length - 1
-  return lines.map((line, i) => {
-    const age = lines.length - 1 - i  // 0 = newest
-    let col
-    if (age === 0) {
-      // Newest line: use selected font colour (speaker override if enabled)
-      col = (state.speakerEnabled && speaker && state.speakerColours[speaker])
-        ? state.speakerColours[speaker]
-        : baseCol
-    } else {
-      col = rolling ? getFadeColour(age, maxAge) : baseCol
-    }
-    return `<span style="color:${col};display:block;white-space:nowrap">${escapeHtml(line)}</span>`
-  }).join('')
+  // All lines use the same selected colour — no fading
+  const col = (state.speakerEnabled && speaker && state.speakerColours[speaker])
+    ? state.speakerColours[speaker]
+    : getSelectedFontColour()
+  return lines.map(line =>
+    '<span style="color:' + col + ';display:block;white-space:nowrap">' + escapeHtml(line) + '</span>'
+  ).join('')
 }
 
 function applyContainerStyle(el) {
@@ -113,9 +104,10 @@ function applyContainerStyle(el) {
   const padding  = parseInt(document.getElementById('padding').value)
   const bgStyle  = document.querySelector('input[name=bg-style]:checked')?.value || 'solid'
   const opacity  = parseInt(document.getElementById('bg-opacity').value) / 100
+  const lineSpacingPct = parseInt(document.getElementById('line-spacing').value) / 100
   el.style.fontSize   = fontSize + 'px'
   el.style.padding    = padding + 'px ' + (padding * 2) + 'px'
-  el.style.lineHeight = '1.45'
+  el.style.lineHeight = lineSpacingPct.toFixed(2)
   el.style.background = bgStyle === 'none' ? 'transparent' : 'rgba(0,0,0,' + opacity + ')'
 }
 
@@ -571,25 +563,40 @@ function buildAssFile() {
   const primCol  = '&H00'+h.slice(4,6)+h.slice(2,4)+h.slice(0,2)
   const fadeAss  = ['&H00444444','&H00666666','&H00888888','&H00AAAAAA','&H00DDDDDD','&H00FFFFFF']
 
-  let out = '[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n'
+  // Use actual video resolution for PlayRes so font sizes are accurate.
+  // The preview window renders at a smaller size — we must scale fontSize up
+  // proportionally so the burned result matches what the preview shows.
+  const videoEl  = document.getElementById('player')
+  const vidW     = state.videoInfo?.streams?.find(s => s.codec_type === 'video' && s.width)?.width  || 1920
+  const vidH     = state.videoInfo?.streams?.find(s => s.codec_type === 'video' && s.width)?.height || 1080
+  const previewW = videoEl.clientWidth  || 800
+  const previewH = videoEl.clientHeight || 450
+  // Scale factor: how much bigger is the real video vs the preview
+  const scaleX   = vidW / previewW
+  const scaleY   = vidH / previewH
+  const scale    = Math.min(scaleX, scaleY)  // use the smaller to avoid clipping
+  const scaledFontSize = Math.round(fontSize * scale)
+  const scaledPad      = Math.round(pad * scale)
+  dbgLog(`ASS burn: video=${vidW}x${vidH} preview=${previewW}x${previewH} scale=${scale.toFixed(2)} font=${fontSize}→${scaledFontSize}`)
+
+  let out = '[Script Info]\nScriptType: v4.00+\nPlayResX: ' + vidW + '\nPlayResY: ' + vidH + '\n\n'
   out += '[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n'
-  out += 'Style: Default,Arial,'+fontSize+','+primCol+',&H000000FF,&H00000000,'+backCol+',0,0,0,0,100,100,0,0,'+borderSt+',1,0,2,'+pad+','+pad+','+pad+',1\n\n'
+  const lineSpacing    = parseInt(document.getElementById('line-spacing').value)  // 100-200
+  const scaledSpacing  = Math.round(lineSpacing * scale)
+  // ASS ScaleY > 100 increases vertical glyph size which pushes lines apart
+  // We encode line spacing as ScaleY — 145 default maps to natural spacing
+  // Normalise so 145 = 100% ScaleY (natural), higher = more spacing
+  const assScaleY = Math.round((lineSpacing / 145) * 100)
+  out += 'Style: Default,Arial,'+scaledFontSize+','+primCol+',&H000000FF,&H00000000,'+backCol+',0,0,0,0,100,'+assScaleY+',0,0,'+borderSt+',1,0,2,'+scaledPad+','+scaledPad+','+scaledPad+',1\n\n'
   out += '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'
 
   for (const ev of state.subEvents) {
     let text
-    if (rolling && ev.lines.length > 1) {
-      const maxAge = ev.lines.length-1
-      text = ev.lines.map((l,i) => {
-        const age  = ev.lines.length-1-i
-        const fidx = Math.round((1-Math.min(age,maxAge)/maxAge)*(fadeAss.length-1))
-        let col    = fadeAss[Math.max(0,Math.min(fidx,fadeAss.length-1))]
-        if (state.speakerEnabled && ev.speaker && age===0) {
-          const sc = getSpeakerColour(ev.speaker).replace('#','')
-          col = '&H00'+sc.slice(4,6)+sc.slice(2,4)+sc.slice(0,2)
-        }
-        return '{\\c'+col+'}'+l
-      }).join('\\N')
+    // All lines use the primary style colour — no per-line colour overrides
+    if (state.speakerEnabled && ev.speaker) {
+      const sc = getSpeakerColour(ev.speaker).replace('#','')
+      const spCol = '&H00'+sc.slice(4,6)+sc.slice(2,4)+sc.slice(0,2)
+      text = ev.lines.map(l => '{\\c'+spCol+'}'+l).join('\\N')
     } else {
       text = ev.lines.join('\\N')
     }
