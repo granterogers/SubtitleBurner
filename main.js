@@ -101,21 +101,22 @@ async function startStreamServer(ffmpegBin) {
       'Access-Control-Allow-Origin': '*',
     })
 
-    // Give the outgoing stream 200ms to flush before killing it
-    const dying = currentStreamProc
-    if (dying) setTimeout(() => { try { dying.kill() } catch {} }, 200)
+    // Kill previous process immediately — overlapping audio causes A/V desync
+    if (currentStreamProc) { try { currentStreamProc.kill() } catch {} }
 
     const fileDur = parseFloat(url.searchParams.get('dur') || '0')
     const segDur  = fileDur > 0 && startTime > 0 ? fileDur - startTime : fileDur
 
     const ffArgs = [
-      ...(startTime > 0 ? ['-ss', String(startTime)] : []),
       '-i', file,
+      // Accurate seek AFTER -i — slower to start but guarantees A/V sync
+      // Fast seek before -i causes video/audio to land on different offsets
+      ...(startTime > 0 ? ['-ss', String(startTime)] : []),
       '-c:v', transcodeVideo ? 'libx264' : 'copy',
       ...(transcodeVideo ? ['-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p'] : []),
       '-c:a', 'aac',
       '-b:a', '192k',
-      // Write duration into moov atom so browser knows total length immediately
+      '-avoid_negative_ts', 'make_zero',
       ...(segDur > 0 ? ['-metadata', 'DURATION=' + segDur.toFixed(3)] : []),
       '-movflags', 'frag_keyframe+empty_moov+faststart+default_base_moof',
       '-f', 'mp4', 'pipe:1'
